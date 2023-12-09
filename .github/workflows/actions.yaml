@@ -1,0 +1,53 @@
+name: on_push
+
+on:
+  push:
+    branch:
+      - "**" # This will run on all branches
+  schedule:
+    - cron: '0 */8 * * *' #This will run every 8h: https://crontab.guru/#*/10_*_*_*_*
+
+jobs:
+
+  build_and_test:
+    runs-on: ubuntu-latest
+
+    env:
+      RUNNER_OS: true
+      HEADLESS_CHROME: true
+      BUILDEVENT_FILE: './buildevents.txt' # This is root of our repositoryy
+
+    steps:
+      - name: Set start time
+        run: echo "START_TIME=$(date +%s)" >> $GITHUB_ENV
+      - uses: kvrhdn/gha-buildevents@v1
+        with:
+          apikey: ${{ secrets.BUILDEVENTS_APIKEY }}
+          dataset: tau-build-pipeline
+          job-status: ${{ job.status }}
+      - uses: actions/checkout@v2
+      - uses: actions/setup-java@v2
+        with:
+          distribution: 'zulu'
+          java-version: 16
+
+      - name: Telemetry start - Maven tests
+        if: always()
+        run: |
+          echo "STEP_START=$(date +%s)" >> $GITHUB_ENV
+          echo "STEP_ID=run-maven-tests" >> $GITHUB_ENV
+      - name: Run tests with maven
+        working-directory: webdriver_java
+        run: mvn test
+      - name: Telemetry - Collect build data
+        working-directory: webdriver_java
+        env:
+          PUSHGATEWAY_URL: ${{ secrets.PUSHGATEWAY_URL }}
+          BUILDEVENT_FILE: ../${{ env.BUILDEVENT_FILE }}
+        if: always()
+        run: |
+          echo "github_actions_total_duration $(expr $(date +%s) - ${START_TIME})" | curl --data-binary @- ${PUSHGATEWAY_URL}/metrics/job/github_actions
+          ./resources/test_result_script.sh
+          buildevents step $TRACE_ID $STEP_ID $STEP_START $STEP_ID
+
+
